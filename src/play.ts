@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { getRecommendations } from './read.js';
 import type { SpotifyHandlerExtra, tool } from './types.js';
-import { getAccessTokenString, handleSpotifyRequest } from './utils.js';
+import {
+  getAccessTokenString,
+  getDefaultDeviceId,
+  handleSpotifyRequest,
+  loadSpotifyConfig,
+} from './utils.js';
 
 const setShuffle: tool<{
   state: z.ZodBoolean;
@@ -25,7 +30,8 @@ const setShuffle: tool<{
     // Call Spotify REST directly and ignore body (204 expected)
     const token = await getAccessTokenString();
     const params = new URLSearchParams({ state: String(state) });
-    if (deviceId) params.append('device_id', deviceId);
+    const targetDeviceId = deviceId || (await getDefaultDeviceId());
+    if (targetDeviceId) params.append('device_id', targetDeviceId);
     const url = `https://api.spotify.com/v1/me/player/shuffle?${params.toString()}`;
     try {
       await fetch(url, {
@@ -93,7 +99,8 @@ const playMusic: tool<{
     }
 
     await handleSpotifyRequest(async (spotifyApi) => {
-      const targetDeviceId = deviceId || '';
+      // Use provided deviceId, or default device, or empty string
+      const targetDeviceId = deviceId || (await getDefaultDeviceId()) || '';
 
       try {
         // First, try to play directly on the specified (or active) device
@@ -117,7 +124,7 @@ const playMusic: tool<{
         }
       } catch (_error) {
         // If the initial playback fails (e.g., no active device), find and transfer.
-        console.log(
+        console.error(
           'Initial playback failed, attempting to find and transfer to a device...',
         );
         const devicesResponse = await spotifyApi.player.getAvailableDevices();
@@ -135,7 +142,11 @@ const playMusic: tool<{
           throw new Error('No suitable Spotify devices found to play on.');
         }
 
+        // Prioritize default device from config, then provided deviceId, then active, then first
+        const config = loadSpotifyConfig();
         const selected =
+          (config.defaultDeviceName &&
+            devices.find((d) => d.name === config.defaultDeviceName)) ||
           devices.find((d) => d.id === deviceId) ||
           devices.find((d) => d.is_active) ||
           devices[0];
@@ -146,7 +157,7 @@ const playMusic: tool<{
           );
         }
 
-        console.log(`Transferring playback to device: ${selected.name}`);
+        console.error(`Transferring playback to device: ${selected.name}`);
         // Transfer playback to the selected device, which should auto-play.
         await spotifyApi.player.transferPlayback([selected.id], true);
 
@@ -199,18 +210,50 @@ const pausePlayback: tool<{
   handler: async (args, _extra: SpotifyHandlerExtra) => {
     const { deviceId } = args;
 
-    await handleSpotifyRequest(async (spotifyApi) => {
-      await spotifyApi.player.pausePlayback(deviceId || '');
-    });
+    try {
+      // Use direct REST API call to avoid JSON parsing issues
+      const accessToken = await getAccessTokenString();
+      const targetDeviceId = deviceId || (await getDefaultDeviceId());
 
-    return {
-      content: [
+      const response = await fetch(
+        'https://api.spotify.com/v1/me/player/pause',
         {
-          type: 'text',
-          text: 'Playback paused',
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          ...(targetDeviceId && {
+            body: JSON.stringify({ device_id: targetDeviceId }),
+          }),
         },
-      ],
-    };
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Playback paused',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error pausing playback: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
   },
 };
 
@@ -228,18 +271,50 @@ const skipToNext: tool<{
   handler: async (args, _extra: SpotifyHandlerExtra) => {
     const { deviceId } = args;
 
-    await handleSpotifyRequest(async (spotifyApi) => {
-      await spotifyApi.player.skipToNext(deviceId || '');
-    });
+    try {
+      // Use direct REST API call to avoid JSON parsing issues
+      const accessToken = await getAccessTokenString();
+      const targetDeviceId = deviceId || (await getDefaultDeviceId());
 
-    return {
-      content: [
+      const response = await fetch(
+        'https://api.spotify.com/v1/me/player/next',
         {
-          type: 'text',
-          text: 'Skipped to next track',
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          ...(targetDeviceId && {
+            body: JSON.stringify({ device_id: targetDeviceId }),
+          }),
         },
-      ],
-    };
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Skipped to next track',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error skipping to next track: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
   },
 };
 
@@ -259,7 +334,8 @@ const skipToPrevious: tool<{
     const { deviceId } = args;
 
     await handleSpotifyRequest(async (spotifyApi) => {
-      await spotifyApi.player.skipToPrevious(deviceId || '');
+      const targetDeviceId = deviceId || (await getDefaultDeviceId()) || '';
+      await spotifyApi.player.skipToPrevious(targetDeviceId);
     });
 
     return {
@@ -397,7 +473,8 @@ const resumePlayback: tool<{
     const { deviceId } = args;
 
     await handleSpotifyRequest(async (spotifyApi) => {
-      await spotifyApi.player.startResumePlayback(deviceId || '');
+      const targetDeviceId = deviceId || (await getDefaultDeviceId()) || '';
+      await spotifyApi.player.startResumePlayback(targetDeviceId);
     });
 
     return {
@@ -438,6 +515,7 @@ const addToQueue: tool<{
   },
   handler: async (args, extra) => {
     const { uri, type, id, deviceId } = args;
+    const targetDeviceId = deviceId || (await getDefaultDeviceId());
 
     let spotifyUri = uri;
     if (!spotifyUri && type && id) {
@@ -446,27 +524,46 @@ const addToQueue: tool<{
 
     if (!spotifyUri) {
       if (type === 'radio' && id) {
-        const recommendations = await getRecommendations.handler(
-          { seed_tracks: id, limit: 20 },
-          extra,
-        );
-        if (recommendations.content[0].type === 'text') {
-          const trackIds = (
-            recommendations.content[0].text.match(/ID: (\S+)/g) || []
-          ).map((s: string) => s.replace('ID: ', ''));
-          for (const trackId of trackIds) {
-            await handleSpotifyRequest(async (spotifyApi) => {
-              await spotifyApi.player.addItemToPlaybackQueue(
-                `spotify:track:${trackId}`,
-                deviceId || undefined,
-              );
-            });
+        try {
+          const recommendations = await getRecommendations.handler(
+            { seed_tracks: id, limit: 20 },
+            extra,
+          );
+          if (recommendations.content[0].type === 'text') {
+            const trackIds = (
+              recommendations.content[0].text.match(/ID: (\S+)/g) || []
+            ).map((s: string) => s.replace('ID: ', ''));
+            for (const trackId of trackIds) {
+              try {
+                await handleSpotifyRequest(async (spotifyApi) => {
+                  await spotifyApi.player.addItemToPlaybackQueue(
+                    `spotify:track:${trackId}`,
+                    targetDeviceId || undefined,
+                  );
+                });
+              } catch (error) {
+                console.error(`Failed to add track ${trackId} to queue:`, error);
+                // Continue with other tracks even if one fails
+              }
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Added ${trackIds.length} recommended tracks to queue`,
+                },
+              ],
+            };
           }
+        } catch (error) {
           return {
             content: [
               {
                 type: 'text',
-                text: `Added ${trackIds.length} recommended tracks to queue`,
+                text: `Error getting recommendations: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+                isError: true,
               },
             ],
           };
@@ -482,20 +579,115 @@ const addToQueue: tool<{
         ],
       };
     }
-    await handleSpotifyRequest(async (spotifyApi) => {
-      await spotifyApi.player.addItemToPlaybackQueue(
-        spotifyUri,
-        deviceId || undefined,
-      );
-    });
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Added item ${spotifyUri} to queue`,
+
+    try {
+      // Use direct REST API call to avoid JSON parsing issues
+      const accessToken = await getAccessTokenString();
+
+      // Build the request URL with query parameters
+      const url = new URL('https://api.spotify.com/v1/me/player/queue');
+      url.searchParams.append('uri', spotifyUri);
+      if (targetDeviceId) {
+        url.searchParams.append('device_id', targetDeviceId);
+      }
+
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
         },
-      ],
-    };
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Added item ${spotifyUri} to queue`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error adding item to queue: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
+  },
+};
+
+const clearQueue: tool<{
+  deviceId: z.ZodOptional<z.ZodString>;
+}> = {
+  name: 'clearQueue',
+  description: 'Clear the Spotify playback queue by playing a single track',
+  schema: {
+    deviceId: z
+      .string()
+      .optional()
+      .describe('The Spotify device ID to clear queue on'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { deviceId } = args;
+
+    try {
+      // Use direct REST API call to clear queue by playing a single track
+      const accessToken = await getAccessTokenString();
+
+      // Play a silent track to effectively clear the queue
+      const targetDeviceId = deviceId || (await getDefaultDeviceId());
+      const response = await fetch(
+        'https://api.spotify.com/v1/me/player/play',
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            uris: ['spotify:track:3gVhsZtseYtY1fMuyYq06F'], // Play Sonne to clear queue
+            ...(targetDeviceId && { device_id: targetDeviceId }),
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Queue cleared - now playing single track',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error clearing queue: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
   },
 };
 
@@ -509,4 +701,5 @@ export const playTools = [
   resumePlayback,
   addToQueue,
   setShuffle,
+  clearQueue,
 ];

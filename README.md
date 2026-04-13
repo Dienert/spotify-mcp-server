@@ -13,6 +13,7 @@ A lightweight [Model Context Protocol (MCP)](https://modelcontextprotocol.io) se
   - [Read Operations](#read-operations)
   - [Album Operations](#album-operations)
   - [Play / Create Operations](#play--create-operations)
+  - [Mood DJ Operations](#mood-dj-operations)
 - [Setup](#setup)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -27,6 +28,9 @@ A lightweight [Model Context Protocol (MCP)](https://modelcontextprotocol.io) se
 - _"Play Elvis's first song"_
 - _"Create a Taylor Swift / Slipknot fusion playlist"_
 - _"Copy all the techno tracks from my workout playlist to my work playlist"_
+- _"I'm feeling energetic, create a workout playlist for me!"_
+- _"Surprise me with a random mood playlist!"_
+- _"I need a quick mood boost - play something happy!"_
 
 ## Tools
 
@@ -193,6 +197,35 @@ A lightweight [Model Context Protocol (MCP)](https://modelcontextprotocol.io) se
      - `albumIds` (array): Array of Spotify album IDs to check (max 20)
    - **Returns**: Status of each album (saved or not saved)
    - **Example**: `checkUsersSavedAlbums(["4aawyAB9vmqN3uQ7FjRGTy", "1DFixLWuPkv3KT3TnV35m3"])`
+
+### Mood DJ Operations 🎵
+
+1. **createMoodPlaylist**
+
+   - **Description**: Create a personalized playlist based on your mood and current time of day
+   - **Parameters**:
+     - `mood` (string): The mood you want the playlist to reflect (happy, sad, energetic, chill, focused, romantic, nostalgic, party, workout, sleepy)
+     - `duration` (string, optional): Playlist duration - short (10-15 tracks), medium (20-30 tracks), long (40-50 tracks)
+     - `includeTimeBased` (boolean, optional): Whether to consider current time of day in recommendations
+   - **Returns**: Created playlist with track list and playlist ID
+   - **Example**: `createMoodPlaylist({ mood: "energetic", duration: "medium", includeTimeBased: true })`
+
+2. **quickMoodBoost**
+
+   - **Description**: Instantly play a single track to match your current mood
+   - **Parameters**:
+     - `mood` (string): The mood you want to boost (happy, sad, energetic, chill, focused, romantic, nostalgic, party, workout, sleepy)
+     - `deviceId` (string, optional): The Spotify device ID to play on
+   - **Returns**: Confirmation that mood track is playing
+   - **Example**: `quickMoodBoost({ mood: "happy", deviceId: "your-device-id" })`
+
+3. **surpriseMe**
+
+   - **Description**: Create a completely random surprise playlist based on a random mood!
+   - **Parameters**:
+     - `duration` (string, optional): Playlist duration - short (10-15 tracks), medium (20-30 tracks), long (40-50 tracks)
+   - **Returns**: Random mood playlist with track list and playlist ID
+   - **Example**: `surpriseMe({ duration: "medium" })`
 
 ## Setup
 

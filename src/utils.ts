@@ -15,6 +15,7 @@ export interface SpotifyConfig {
   redirectUri: string;
   accessToken?: string;
   refreshToken?: string;
+  defaultDeviceName?: string;
 }
 
 export function loadSpotifyConfig(): SpotifyConfig {
@@ -34,8 +35,7 @@ export function loadSpotifyConfig(): SpotifyConfig {
     return config;
   } catch (error) {
     throw new Error(
-      `Failed to parse Spotify configuration: ${
-        error instanceof Error ? error.message : String(error)
+      `Failed to parse Spotify configuration: ${error instanceof Error ? error.message : String(error)
       }`,
     );
   }
@@ -359,7 +359,7 @@ export async function handleSpotifyRequest<T>(
       errorMessage.includes('Bad or expired token') ||
       errorMessage.includes('Permissions missing') // Also handle token revocation
     ) {
-      console.log('Spotify access token expired or invalid, refreshing...');
+      console.error('Spotify access token expired or invalid, refreshing...');
       try {
         await refreshAccessToken();
         const spotifyApi = createSpotifyApi(); // Re-create with the new token
@@ -406,4 +406,27 @@ export async function getAccessTokenString(): Promise<string> {
     }
     return tokenObj.access_token as string;
   }
+}
+
+// Get device ID by device name
+export async function getDeviceIdByName(deviceName: string): Promise<string | null> {
+  try {
+    const spotifyApi = createSpotifyApi();
+    const devicesResponse = await spotifyApi.player.getAvailableDevices();
+    const devices = devicesResponse.devices || [];
+    const device = devices.find((d) => d.name === deviceName);
+    return device?.id || null;
+  } catch (error) {
+    console.error(`Error finding device by name "${deviceName}":`, error);
+    return null;
+  }
+}
+
+// Get the default device ID from config, or null if not set or not found
+export async function getDefaultDeviceId(): Promise<string | null> {
+  const config = loadSpotifyConfig();
+  if (!config.defaultDeviceName) {
+    return null;
+  }
+  return await getDeviceIdByName(config.defaultDeviceName);
 }

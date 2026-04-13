@@ -1,7 +1,7 @@
 import type { MaxInt } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
 import type { SpotifyHandlerExtra, SpotifyTrack, tool } from './types.js';
-import { formatDuration, handleSpotifyRequest } from './utils.js';
+import { formatDuration, handleSpotifyRequest, getAccessTokenString } from './utils.js';
 
 function isTrack(item: any): item is SpotifyTrack {
   return (
@@ -552,6 +552,161 @@ export const getRecommendations: tool<{
     };
   },
 };
+const saveOrRemoveTrackForUser: tool<{
+  trackIds: z.ZodArray<z.ZodString>;
+  action: z.ZodEnum<['save', 'remove']>;
+}> = {
+  name: 'saveOrRemoveTrackForUser',
+  description: 'Save or remove tracks from the user\'s "Liked Songs" library',
+  schema: {
+    trackIds: z
+      .array(z.string())
+      .max(50)
+      .describe('Array of Spotify track IDs (max 50)'),
+    action: z
+      .enum(['save', 'remove'])
+      .describe('Action to perform: save or remove tracks'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { trackIds, action } = args;
+
+    if (trackIds.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: No track IDs provided',
+            isError: true,
+          },
+        ],
+      };
+    }
+
+    try {
+      // Use REST API directly as the SDK method seems to have issues
+      const accessToken = await getAccessTokenString();
+      const endpoint = action === 'save' ? 'PUT' : 'DELETE';
+      const response = await fetch('https://api.spotify.com/v1/me/tracks', {
+        method: endpoint,
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids: trackIds }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      const actionPastTense = action === 'save' ? 'saved' : 'removed';
+      const preposition = action === 'save' ? 'to' : 'from';
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully ${actionPastTense} ${trackIds.length} track${
+              trackIds.length === 1 ? '' : 's'
+            } ${preposition} your Liked Songs`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error ${action === 'save' ? 'saving' : 'removing'} tracks: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
+  },
+};
+
+const likeCurrentTrack: tool<Record<string, never>> = {
+  name: 'likeCurrentTrack',
+  description: 'Like/save the currently playing track to your Liked Songs',
+  schema: {},
+  handler: async (_args, _extra: SpotifyHandlerExtra) => {
+    try {
+      const currentTrack = await handleSpotifyRequest(async (spotifyApi) => {
+        return await spotifyApi.player.getCurrentlyPlayingTrack();
+      });
+
+      if (!currentTrack?.item) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'No track is currently playing',
+              isError: true,
+            },
+          ],
+        };
+      }
+
+      const item = currentTrack.item;
+
+      if (!isTrack(item)) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Currently playing item is not a track (might be a podcast episode)',
+              isError: true,
+            },
+          ],
+        };
+      }
+
+      // Use REST API directly as the SDK method seems to have issues
+      const accessToken = await getAccessTokenString();
+      const response = await fetch('https://api.spotify.com/v1/me/tracks', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids: [item.id] }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Spotify API error: ${response.status} ${errorText}`);
+      }
+
+      const artists = item.artists.map((a) => a.name).join(', ');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully liked "${item.name}" by ${artists}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error liking track: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            isError: true,
+          },
+        ],
+      };
+    }
+  },
+};
+
 export const readTools = [
   searchSpotify,
   getNowPlaying,
@@ -561,4 +716,6 @@ export const readTools = [
   getUsersSavedTracks,
   getDevices,
   getRecommendations,
+  saveOrRemoveTrackForUser,
+  likeCurrentTrack,
 ];
